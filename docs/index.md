@@ -4,7 +4,7 @@ A curated collection of templates for GitHub Agentic Workflows
 
 ## Guides
 
-- [Implementing Agentic Workflows (Windows / Linux / macOS)](getting-started.md)
+- [Getting started](getting-started.md)
 
 ## References
 
