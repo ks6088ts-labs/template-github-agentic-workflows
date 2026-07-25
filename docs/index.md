@@ -2,9 +2,9 @@
 
 A curated collection of templates for GitHub Agentic Workflows
 
-## Guides
+## Tutorials
 
-- [Getting started](getting-started.md)
+1. [Getting started](tutorials/01_getting-started.md)
 
 ## References
 

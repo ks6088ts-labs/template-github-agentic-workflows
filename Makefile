@@ -36,7 +36,8 @@ auth-login: ## authenticate GitHub CLI (gh auth login)
 
 .PHONY: set-secret-github-copilot-token
 set-secret-github-copilot-token: ## set COPILOT_GITHUB_TOKEN repository secret from the environment variable
-	gh secret set COPILOT_GITHUB_TOKEN --body $$COPILOT_GITHUB_TOKEN
+	@if [ -z "$$COPILOT_GITHUB_TOKEN" ]; then echo "COPILOT_GITHUB_TOKEN is not set"; exit 1; fi
+	@gh secret set COPILOT_GITHUB_TOKEN --body "$$COPILOT_GITHUB_TOKEN"
 
 .PHONY: compile
 compile: ## compile agentic workflows into .github/workflows/*.lock.yml
@@ -64,4 +65,3 @@ ci-test: install-deps-dev info validate lint ## run CI checks (install deps, val
 .PHONY: run
 run: ## run an agentic workflow (usage: make run WORKFLOW=daily-repo-status)
 	gh aw run $(WORKFLOW)
-

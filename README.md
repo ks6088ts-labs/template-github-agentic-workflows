@@ -1,4 +1,4 @@
-[![test](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/workflows/test.yaml/badge.svg?branch=main)](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/workflows/test.yaml?query=branch%3Amain)
+[![test](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/workflows/test.yaml/badge.svg)](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/workflows/test.yaml)
 
 # template-github-agentic-workflows
 
@@ -41,11 +41,11 @@ gh --version
 make --version
 ```
 
-## Getting Started
+## Tutorials
 
-Once the prerequisites are in place, follow the step-by-step guide to author, validate, and run your first workflow:
+Once the prerequisites are in place, follow the step-by-step tutorials to author, validate, and run your first workflow:
 
-- **[Getting started guide](docs/getting-started.md)**
+1. **[Getting started](docs/tutorials/01_getting-started.md)**
 
 ## References
 

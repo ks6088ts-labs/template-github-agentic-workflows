@@ -27,10 +27,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install dependencies (GitHub CLI extensions)
-        shell: bash
-        run: make install-deps-dev
-
       - name: Run CI tests
         shell: bash
         run: make ci-test

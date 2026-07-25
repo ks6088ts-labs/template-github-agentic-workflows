@@ -1,8 +1,8 @@
 # Getting Started
 
-Minimal steps to author, validate, and run a GitHub Agentic Workflow using the included [`Makefile`](../Makefile). Run `make help` to list every available target.
+Minimal steps to author, validate, and run a GitHub Agentic Workflow using the included [`Makefile`](../../Makefile). Run `make help` to list every available target.
 
-> Complete the [prerequisites](../README.md#prerequisites) before you start.
+> Complete the [prerequisites](../../README.md#prerequisites) before you start.
 
 ## Overview
 
@@ -56,7 +56,7 @@ make install-deps-dev
 
 Workflows are Markdown files (`*.md`) under `.github/workflows/`. Declare triggers, permissions, and safe outputs in the YAML frontmatter, and write instructions in natural language in the body.
 
-Example: `.github/workflows/daily-repo-status.md`
+Example: [.github/workflows/daily-repo-status.md](../../.github/workflows/daily-repo-status.md)
 
 ```markdown
 ---
