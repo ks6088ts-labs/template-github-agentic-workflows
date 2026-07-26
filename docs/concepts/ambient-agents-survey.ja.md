@@ -1,4 +1,4 @@
-# ambient agent と Human-in-the-Loop: 簡易サーベイ (v1)
+# ambient agent と Human-in-the-Loop: 簡易サーベイ
 
 「ambient agent + Human-in-the-Loop (HITL)」という考え方と、GitHub Agentic Workflows (gh-aw) がそれをどのように実現するかについての初版サーベイです。ペルソナシナリオの拡充に合わせて発展させることを想定した初版です。
 

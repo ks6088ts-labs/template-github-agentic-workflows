@@ -82,7 +82,7 @@ all artifacts are scanned and secret values are redacted (masked) before upload 
 
 ## How this repository applies it
 
-Both v1 workflows follow the same safe pattern:
+Both workflows follow the same safe pattern:
 
 | Workflow | Permissions | Safe-output | Human-in-the-Loop |
 | --- | --- | --- | --- |

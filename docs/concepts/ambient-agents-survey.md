@@ -1,4 +1,4 @@
-# Ambient agents and Human-in-the-Loop: a short survey (v1)
+# Ambient agents and Human-in-the-Loop: a short survey
 
 An initial survey of the "ambient agent + Human-in-the-Loop (HITL)" idea and how
 GitHub Agentic Workflows (gh-aw) realizes it. This is a first version meant to be

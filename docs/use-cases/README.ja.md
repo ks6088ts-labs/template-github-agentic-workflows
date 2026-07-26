@@ -15,10 +15,10 @@ flowchart LR
 
 ## ペルソナ
 
-| ペルソナ | テーマ | v1 シナリオ | 状態 |
+| ペルソナ | テーマ | シナリオ | 状態 |
 | --- | --- | --- | --- |
-| ① ソフトウェア開発者 | PR レビュー、Issue トリアージ、リリースノート | [PR レビュー補助](dev-productivity/pr-review-helper.ja.md) | ✅ v1 |
-| ② IT インフラ運用者 | 障害トリアージ、ステータスレポート、依存更新 | [定期ステータスレポート](infra-ops/status-report.ja.md) | ✅ v1 |
+| ① ソフトウェア開発者 | PR レビュー、Issue トリアージ、リリースノート | [PR レビュー補助](dev-productivity/pr-review-helper.ja.md) | ✅ 提供中 |
+| ② IT インフラ運用者 | 障害トリアージ、ステータスレポート、依存更新 | [定期ステータスレポート](infra-ops/status-report.ja.md) | ✅ 提供中 |
 | ③ 社内間接業務 (IssueOps) | 申請・承認フロー、ナレッジ Q&A | — | 🚧 準備中 |
 | ④ 勤怠ルーチンワーク | リマインド、定例集計、締め処理通知 | — | 🚧 準備中 |
 

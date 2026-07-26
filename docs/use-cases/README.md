@@ -18,10 +18,10 @@ flowchart LR
 
 ## Personas
 
-| Persona | Theme | v1 scenario | Status |
+| Persona | Theme | Scenario | Status |
 | --- | --- | --- | --- |
-| ① Software developer | PR review, issue triage, release notes | [PR review helper](dev-productivity/pr-review-helper.md) | ✅ v1 |
-| ② IT infra operator | Fault triage, status reports, dependency updates | [Periodic status report](infra-ops/status-report.md) | ✅ v1 |
+| ① Software developer | PR review, issue triage, release notes | [PR review helper](dev-productivity/pr-review-helper.md) | ✅ Available |
+| ② IT infra operator | Fault triage, status reports, dependency updates | [Periodic status report](infra-ops/status-report.md) | ✅ Available |
 | ③ Back-office (IssueOps) | Request/approval flows, knowledge Q&A | — | 🚧 coming soon |
 | ④ Attendance routine | Reminders, periodic aggregation, closing notices | — | 🚧 coming soon |
 
