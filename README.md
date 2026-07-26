@@ -47,6 +47,20 @@ Once the prerequisites are in place, follow the step-by-step tutorials to author
 
 1. **[Getting started](docs/tutorials/01_getting-started.md)**
 
+## Use cases
+
+Persona-based scenarios, each linked to a working workflow — see the [use-case index](docs/use-cases/README.md):
+
+- ① Software developer — [PR review helper](docs/use-cases/dev-productivity/pr-review-helper.md)
+- ② IT infra operator — [Periodic status report](docs/use-cases/infra-ops/status-report.md)
+
+## Concepts
+
+- [Execution architecture: managed runtime, cost, and security](docs/concepts/execution-architecture.md)
+- [Ambient agents and Human-in-the-Loop: a short survey](docs/concepts/ambient-agents-survey.md)
+- [Workflow format and the compile pipeline](docs/concepts/compilation-and-format.md)
+- [External integrations: Azure and external APIs](docs/concepts/external-integrations.md)
+
 ## References
 
 - [Your first agentic workflow (Quickstart)](https://docs.github.com/en/copilot/how-tos/github-agentic-workflows/quickstart)

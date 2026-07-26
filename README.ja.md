@@ -47,6 +47,20 @@ make --version
 
 1. **[はじめに](docs/tutorials/01_getting-started.ja.md)**
 
+## ユースケース
+
+動作するワークフローに紐づいたペルソナ別シナリオです — [ユースケース一覧](docs/use-cases/README.ja.md)を参照してください:
+
+- ① ソフトウェア開発者 — [PR レビュー補助](docs/use-cases/dev-productivity/pr-review-helper.ja.md)
+- ② IT インフラ運用者 — [定期ステータスレポート](docs/use-cases/infra-ops/status-report.ja.md)
+
+## コンセプト
+
+- [実行アーキテクチャ: managed 実行環境・コスト・セキュリティ](docs/concepts/execution-architecture.ja.md)
+- [ambient agent と Human-in-the-Loop: 簡易サーベイ](docs/concepts/ambient-agents-survey.ja.md)
+- [ワークフローのフォーマットとコンパイルパイプライン](docs/concepts/compilation-and-format.ja.md)
+- [外部連携: Azure・外部 API](docs/concepts/external-integrations.ja.md)
+
 ## 参考リンク
 
 - [はじめてのエージェントワークフロー（クイックスタート）](https://docs.github.com/en/copilot/how-tos/github-agentic-workflows/quickstart)

@@ -53,10 +53,12 @@ validate: ## validate agentic workflows without generating lock files (non-destr
 
 .PHONY: lint
 lint: ## lint compiled .lock.yml workflows with actionlint
-	@if ls .github/workflows/*.lock.yml >/dev/null 2>&1; then \
-		gh aw lint; \
-	else \
+	@if ! ls .github/workflows/*.lock.yml >/dev/null 2>&1; then \
 		echo "no .lock.yml files; skipping lint"; \
+	elif ! docker info >/dev/null 2>&1; then \
+		echo "Docker daemon not available; skipping lint (gh aw lint runs actionlint via Docker). CI runs lint fully."; \
+	else \
+		gh aw lint; \
 	fi
 
 .PHONY: ci-test
