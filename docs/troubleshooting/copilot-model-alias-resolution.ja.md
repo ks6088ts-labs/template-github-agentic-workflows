@@ -1,11 +1,49 @@
-# FAQ: Copilot のモデルエイリアス解決が起動前に失敗する
+# FAQ: Copilot のモデル選択が起動前に失敗する
 
-この FAQ は、2026 年 9 月 19 日に発生した `daily-repo-status` の関連する 2 件の失敗について、
+この FAQ は、2026 年 9 月 19 日から 20 日に発生した `daily-repo-status` の関連する 3 件の失敗について、
 調査結果を記録したものです。最初の実行はモデルエイリアスの解決中に停止しました。後続の実行では
 具体的なモデルを使用しましたが、Copilot provider が credential を HTTP 401 で拒否し、最初の
-エージェントターンより前に停止しました。
+エージェントターンより前に停止しました。直近の実行では、その具体的なモデルが
+`agentic-workflows` integrator で利用できなくなり、HTTP 400 が返されました。
 
-## どのような失敗か
+## `requested model is not available` は何を意味するか
+
+[直近の失敗した実行](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529)で
+判定に使用したログは次のとおりです。
+
+```text
+[copilot-harness] inference routing: mode=cli configuredModel="claude-sonnet-4.6" endpoint=managed-by-copilot-cli
+400 The requested model is not available for integrator "agentic-workflows". Available models: [... claude-sonnet-5 ...]
+[copilot-harness] all 3 retries exhausted — giving up (exitCode=1)
+```
+
+workflow はコンテナ起動を通過し、具体的な ID `claude-sonnet-4.6` を Copilot CLI に渡しましたが、
+最初の推論ターンより前に provider が拒否しました。同じ response の利用可能一覧には
+`claude-sonnet-5` が含まれ、`claude-sonnet-4.6` は含まれていないため、この integrator に対する
+設定モデルが古くなっていたと判断できます。これはエイリアス解決、token 認証、network の失敗ではありません。
+
+## 利用できない具体的なモデルをどう修正するか
+
+失敗した実行の `Available models` 一覧から具体的な ID を選択します。同じモデル系統を維持するため、
+このリポジトリでは次の値へ更新しました。
+
+```yaml
+engine: copilot
+model: claude-sonnet-5
+```
+
+次に、ソースワークフローから lock file を再生成します。
+
+```bash
+gh aw compile daily-repo-status --strict
+```
+
+`.lock.yml` は直接編集しません。生成された metadata とすべての `COPILOT_MODEL` の固定値が
+新しい ID になったことを確認してから、workflow を再実行します。モデルの利用可否は integrator、
+account entitlement、policy に依存し、時間とともに変わることがあります。以前の成功実績や古い compiler
+catalog より、失敗した request 自体が返した一覧を優先してください。
+
+## 以前のモデルエイリアス解決失敗はどのようなものか
 
 判定に使用したログは次のとおりです。
 
@@ -20,7 +58,7 @@
 コンテナと API proxy のヘルスチェックは成功しました。一方、Copilot が起動しなかったため、
 audit ではエージェントターンと effective token がともに 0 と記録されました。
 
-## 原因は何か
+## 以前のエイリアス解決失敗の原因は何か
 
 次の 4 条件が連鎖して失敗しました。
 
@@ -39,16 +77,17 @@ v0.88.7 の resolver が live catalog を必要とするのは、設定値が既
 具体的な model ID はエイリアス展開を迂回します。上流の回帰テストでも、catalog が空でも具体的な
 モデルを使用できることを明示的に検証しています。
 
-このリポジトリでは、ソースワークフローでモデルを次のように固定します。
+以前の事例では、ソースワークフローで具体的なモデルを固定しました。そのモデルが後に runtime の
+利用可能一覧から外れたため、現在のソースでは利用可能な同系統のモデルを使用します。
 
 ```yaml
 engine: copilot
-model: claude-sonnet-4.6
+model: claude-sonnet-5
 ```
 
 `claude-sonnet-4.6` は v0.88.7 のモデルメタデータに含まれ、このワークフローの audit baseline で
-成功実績がありました。この値は今回の事例に固有です。リポジトリの Copilot subscription と policy で
-許可された具体的なモデルを使用してください。
+成功実績がありましたが、その履歴は将来の利用可否を保証しません。現在の runtime が返す一覧に含まれ、
+リポジトリの Copilot subscription と policy で許可された具体的なモデルを使用してください。
 
 frontmatter を変更した後は、lock ファイルを直接編集せず再生成します。
 
@@ -185,7 +224,8 @@ permissions:
 いいえ。harness は reflection payload を `/home/runner/work/_temp/awf-reflect.json` に保存できないことも
 記録しました。この warning は診断 artifact の保存に影響しますが、実行は継続しました。最初の実行は
 未解決エイリアスのメッセージ後に終了し、後続の実行は Copilot CLI まで到達して
-`authentication_failed` と明示的に分類されました。
+`authentication_failed` と明示的に分類されました。直近の実行も Copilot CLI まで到達し、利用できない
+モデルを示す HTTP 400 を明示的に返しました。
 
 reflection artifact が必要な場合は permission warning を別の runtime issue として扱います。ただし、
 モデルカタログとエイリアス解決のメッセージが存在する場合、この終了の説明として permission warning を
@@ -204,6 +244,9 @@ gh aw logs <workflow-name> --json
 
 | Signal | 解釈 |
 | --- | --- |
+| `requested model is not available for integrator "agentic-workflows"` | 現在の runtime entitlement または policy では設定した具体的な ID を利用できません。同時に出力された `Available models` 一覧から ID を選択します。 |
+| 指定したモデルが `Available models` にない | 以前の実行や compiler catalog で受理されていても、設定した ID は古いものとして扱います。 |
+| モデル関連の同じ HTTP 400 が harness の retry ごとに繰り返される | 決定的な設定エラーです。retry しても利用できないモデルは有効になりません。 |
 | `COPILOT_MODEL: auto` または別のエイリアス | Copilot を起動する前に runtime catalog data が必要です。 |
 | `models fetch returned 401` または `403` | catalog endpoint が認証または認可を拒否しています。この永続的な 4xx response は fail-fast になります。 |
 | `models fetch returned 429` または `503` | catalog endpoint が一時的に利用できません。現在の gh-aw は bounded retry を行います。 |
@@ -217,13 +260,14 @@ gh aw logs <workflow-name> --json
 
 ## 復旧手順は何か
 
-1. リポジトリの subscription で使用できる具体的な Copilot model を選択します。
-2. ソースの `*.md` ワークフローに `engine: copilot` とトップレベルの `model:` を設定します。
-3. 再コンパイルし、ソースワークフローと生成された `.lock.yml` の両方をコミットします。
-4. リポジトリの検証を実行してから、ワークフローを再実行します。
-5. 再実行を audit し、1 回以上の推論ターンが開始されたことを確認します。
-6. 推論自体が 401 を返す場合は、互換性のある PAT を作成し、`COPILOT_GITHUB_TOKEN` を更新して Copilot CLI で PAT を検証します。
-7. 新しい PAT でも失敗する場合は、Copilot license、model entitlement、または organization policy を修正します。
+1. 最終的な retry error ではなく、provider の正確なメッセージから失敗を分類します。
+2. `requested model is not available` の場合は、その response の `Available models` 一覧から具体的な ID を選択します。
+3. 未解決エイリアスの場合は、リポジトリの subscription で使用できる具体的な Copilot model を選択します。
+4. ソースの `*.md` ワークフローに `engine: copilot` とトップレベルの `model:` を設定します。
+5. 再コンパイルし、ソースワークフローと生成された `.lock.yml` の両方をコミットします。
+6. リポジトリの検証後に workflow を再実行し、1 回以上の推論ターンが開始されたことを確認します。
+7. 推論が 401 を返す場合は、互換性のある PAT を作成し、`COPILOT_GITHUB_TOKEN` を更新して Copilot CLI で PAT を検証します。
+8. 新しい PAT でも失敗する場合は、Copilot license、model entitlement、または organization policy を修正します。
 
 このリポジトリでは、次の順序でローカル検証します。
 
@@ -237,6 +281,7 @@ gh aw run daily-repo-status
 
 | 根拠 | 一次情報 |
 | --- | --- |
+| 具体的なモデルの利用不可エラーと現在のモデル一覧 | [Workflow run 35471741529](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529)と、その [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529/job/105973861793#step:26:211) |
 | 今回のログと 401／エイリアス解決失敗 | [Workflow run 35470003900](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900)と、その [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900/job/105969169242#step:26:210) |
 | 具体的なモデルに対する provider の 401 と `authentication_failed` の分類 | [Workflow run 35471231052](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052)と、その [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052/job/105972518194#step:26:210) |
 | エイリアスキーは catalog が必要で、具体的な ID はエイリアス解決を迂回する | [gh-aw v0.88.7 の `resolve_model_alias.cjs`](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.cjs) |

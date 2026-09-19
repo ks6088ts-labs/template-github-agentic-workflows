@@ -1,11 +1,51 @@
-# FAQ: Copilot model alias resolution fails before startup
+# FAQ: Copilot model selection fails before startup
 
-This FAQ records two related `daily-repo-status` failures observed on September
-19, 2026. The first stopped during model-alias resolution. The follow-up used a
-concrete model but stopped before the first agent turn when the Copilot provider
-rejected its credential with HTTP 401.
+This FAQ records three related `daily-repo-status` failures observed on September
+19-20, 2026. The first stopped during model-alias resolution. The follow-up used
+a concrete model but stopped before the first agent turn when the Copilot provider
+rejected its credential with HTTP 401. The latest run returned HTTP 400 because
+that concrete model was no longer available to the `agentic-workflows` integrator.
 
-## What does the failure look like?
+## What does `requested model is not available` mean?
+
+The decisive sequence in the [latest failed run](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529) is:
+
+```text
+[copilot-harness] inference routing: mode=cli configuredModel="claude-sonnet-4.6" endpoint=managed-by-copilot-cli
+400 The requested model is not available for integrator "agentic-workflows". Available models: [... claude-sonnet-5 ...]
+[copilot-harness] all 3 retries exhausted — giving up (exitCode=1)
+```
+
+The workflow passed container startup and handed the concrete ID
+`claude-sonnet-4.6` to Copilot CLI, but the provider rejected it before the first
+inference turn. The same response listed `claude-sonnet-5` as available and did
+not list `claude-sonnet-4.6`, so the configured model had become stale for this
+integrator. This is not an alias-resolution, token-authentication, or network
+failure.
+
+## How do I fix an unavailable concrete model?
+
+Choose a concrete ID from the `Available models` list in the failed run. To keep
+the same model family, this repository now uses:
+
+```yaml
+engine: copilot
+model: claude-sonnet-5
+```
+
+Then regenerate the lock file from the source workflow:
+
+```bash
+gh aw compile daily-repo-status --strict
+```
+
+Do not edit `.lock.yml` directly. Confirm that the generated metadata and every
+literal `COPILOT_MODEL` value use the replacement ID, then rerun the workflow.
+Model availability is scoped to the integrator, account entitlement, and policy,
+and it can change over time; the list returned by the failing request is more
+authoritative than a previously successful run or an older compiler catalog.
+
+## What did the earlier alias-resolution failure look like?
 
 The decisive log sequence is:
 
@@ -21,7 +61,7 @@ the containers and API proxy health checks succeeded. The audit nevertheless
 reported zero agent turns and zero effective tokens because Copilot was never
 started.
 
-## What caused it?
+## What caused the earlier alias-resolution failure?
 
 Four conditions formed the failure chain:
 
@@ -42,16 +82,19 @@ known alias key. A concrete model ID bypasses alias expansion; the upstream
 regression test explicitly verifies that a concrete model remains usable when
 the catalog is empty.
 
-This repository therefore pins the model in the source workflow:
+The earlier incident therefore pinned a concrete model in the source workflow.
+That model was subsequently removed from the runtime availability list, so the
+current source uses an available model from the same family:
 
 ```yaml
 engine: copilot
-model: claude-sonnet-4.6
+model: claude-sonnet-5
 ```
 
 `claude-sonnet-4.6` was present in the v0.88.7 model metadata and had succeeded
-in the audit baselines for this workflow. This value is incident-specific: use a
-concrete model that the repository's Copilot subscription and policies allow.
+in the audit baselines for this workflow, but that history did not guarantee
+continued availability. Use a concrete model listed by the current runtime for
+the repository's Copilot subscription and policies.
 
 After changing frontmatter, regenerate the lock file rather than editing it:
 
@@ -199,7 +242,8 @@ No. The harness also logged that it could not persist the reflection payload to
 `/home/runner/work/_temp/awf-reflect.json`. That warning affects diagnostic
 artifact persistence, but execution continued. The original run exited after
 the unresolved-alias message; the follow-up run reached the Copilot CLI and was
-explicitly classified as `authentication_failed`.
+explicitly classified as `authentication_failed`; the latest run reached the
+Copilot CLI and returned the explicit unavailable-model HTTP 400.
 
 Treat the permission warning as a separate runtime issue if reflection artifacts
 are needed, but do not use it to explain this exit unless the model-catalog and
@@ -218,6 +262,9 @@ Check the signals in this order:
 
 | Signal | Interpretation |
 | --- | --- |
+| `requested model is not available for integrator "agentic-workflows"` | The configured concrete ID is unavailable under the current runtime entitlement or policy; select an ID from the accompanying `Available models` list. |
+| The requested model is absent from `Available models` | Treat the configured ID as stale even if an earlier run or compiler catalog accepted it. |
+| The same model-related HTTP 400 repeats across harness retries | This is a deterministic configuration failure; retries do not make an unavailable model valid. |
 | `COPILOT_MODEL: auto` or another alias | Runtime catalog data is required before Copilot can start. |
 | `models fetch returned 401` or `403` | The catalog endpoint rejected authentication or authorization; these permanent 4xx responses are fail-fast. |
 | `models fetch returned 429` or `503` | The catalog endpoint is temporarily unavailable; current gh-aw versions use bounded retries. |
@@ -232,13 +279,14 @@ upstream fix.
 
 ## What is the recovery checklist?
 
-1. Select a concrete Copilot model supported by the repository's subscription.
-2. Set `engine: copilot` and top-level `model:` in the source `*.md` workflow.
-3. Recompile and commit both the source workflow and generated `.lock.yml`.
-4. Run repository validation, then dispatch the workflow again.
-5. Audit the rerun and confirm that at least one inference turn starts.
-6. If inference itself returns 401, create a compatible PAT, update `COPILOT_GITHUB_TOKEN`, and test the PAT with Copilot CLI.
-7. If a fresh PAT still fails, repair the Copilot license, model entitlement, or organization policy.
+1. Classify the failure from the exact provider message rather than the final retry error.
+2. For `requested model is not available`, select a concrete ID from that response's `Available models` list.
+3. For an unresolved alias, select a concrete Copilot model supported by the repository's subscription.
+4. Set `engine: copilot` and top-level `model:` in the source `*.md` workflow.
+5. Recompile and commit both the source workflow and generated `.lock.yml`.
+6. Run repository validation, dispatch the workflow again, and confirm that at least one inference turn starts.
+7. If inference returns 401, create a compatible PAT, update `COPILOT_GITHUB_TOKEN`, and test the PAT with Copilot CLI.
+8. If a fresh PAT still fails, repair the Copilot license, model entitlement, or organization policy.
 
 For this repository, the local validation sequence is:
 
@@ -252,6 +300,7 @@ gh aw run daily-repo-status
 
 | Evidence | Primary source |
 | --- | --- |
+| Concrete model rejected as unavailable and current model list | [Workflow run 35471741529](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529/job/105973861793#step:26:211) |
 | Incident log and exact 401/alias failure | [Workflow run 35470003900](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900/job/105969169242#step:26:210) |
 | Concrete-model provider 401 and `authentication_failed` classification | [Workflow run 35471231052](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052/job/105972518194#step:26:210) |
 | Alias keys require a catalog; concrete IDs bypass alias resolution | [`resolve_model_alias.cjs` at gh-aw v0.88.7](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.cjs) |

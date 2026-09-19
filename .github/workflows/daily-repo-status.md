@@ -6,7 +6,7 @@ permissions:
   issues: read
   pull-requests: read
 engine: copilot
-model: claude-sonnet-4.6
+model: claude-sonnet-5
 safe-outputs:
   create-issue:
     title-prefix: "[team-status] "

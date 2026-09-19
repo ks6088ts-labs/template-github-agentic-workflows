@@ -22,7 +22,7 @@ GitHub Agentic Workflows のための厳選されたテンプレート集
 
 ## トラブルシューティング
 
-- [FAQ: Copilot のモデルエイリアス解決が起動前に失敗する](troubleshooting/copilot-model-alias-resolution.ja.md)
+- [FAQ: Copilot のモデル選択が起動前に失敗する](troubleshooting/copilot-model-alias-resolution.ja.md)
 
 ## 参考リンク
 
