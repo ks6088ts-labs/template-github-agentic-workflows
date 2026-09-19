@@ -1,9 +1,9 @@
 # FAQ: Copilot model alias resolution fails before startup
 
-This FAQ records the diagnosis of the `daily-repo-status` failure observed on
-September 19, 2026. It applies when a GitHub Agentic Workflow stops before the
-first agent turn with both a model-catalog error and an unresolved-model-alias
-error.
+This FAQ records two related `daily-repo-status` failures observed on September
+19, 2026. The first stopped during model-alias resolution. The follow-up used a
+concrete model but stopped before the first agent turn when the Copilot provider
+rejected its credential with HTTP 401.
 
 ## What does the failure look like?
 
@@ -62,21 +62,126 @@ gh aw compile daily-repo-status --strict
 The generated `.lock.yml` should then contain a literal `COPILOT_MODEL` instead
 of an expression whose fallback is `auto`.
 
-## Does pinning a model prove that the token is valid?
+## What does a 401 after pinning a concrete model mean?
 
-No. Pinning a concrete model removes the catalog lookup from alias resolution;
-it does not bypass authentication for inference. The failed run's activation
-secret check passed, yet the model-list endpoint still returned 401.
+Pinning a concrete model removes the catalog dependency from alias resolution;
+it does not bypass authentication for model discovery or inference. The
+[follow-up run](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052)
+contained this decisive sequence:
 
-If a rerun reaches Copilot but inference also returns 401, verify that
-`COPILOT_GITHUB_TOKEN` is present, unexpired, and entitled to use the selected
-model. Re-register the secret when necessary:
+```text
+[copilot-harness] awf-reflect: models fetch returned 401 for http://api-proxy:10002/models
+[copilot-harness] inference routing: mode=cli configuredModel="claude-sonnet-4.6" endpoint=managed-by-copilot-cli
+Authentication failed with provider at http://172.30.0.30:10002 (HTTP 401).
+[copilot-harness] attempt 2 failed: exitCode=1 failureClass=authentication_failed ... tokenCount=0
+```
+
+This confirms that `claude-sonnet-4.6` reached the Copilot CLI as a concrete
+model and that the provider rejected authentication before producing any
+tokens. The activation step named `Validate COPILOT_GITHUB_TOKEN secret`
+succeeded, but that check only established that a secret was supplied; the
+provider's 401 showed that the credential was not usable for this request.
+
+The actionable repository secret remains `COPILOT_GITHUB_TOKEN`. The
+`COPILOT_PROVIDER_*` names in the Copilot CLI error describe the internal AWF
+proxy handoff and do not require additional repository secrets.
+
+## Does this prove that the stored token is old?
+
+No. HTTP 401 proves that the provider rejected the credential, but it does not
+identify the credential lifecycle or policy reason. An expired or revoked token
+is a strong candidate. Other candidates are an unsupported token type, missing
+`Copilot Requests` permission, no active Copilot license for the token owner, or
+an organization/model policy that denies the selected model.
+
+GitHub documents that a PAT can stop working at its expiration date, after one
+year without use, after public exposure, or after revocation. An expired or
+revoked token cannot be restored; create a replacement. The timestamp reported
+by `gh secret list` shows when the Actions secret was last registered, not the
+PAT's expiration or validity, and GitHub does not expose secret values for
+comparison.
+
+For this incident, the repository metadata inspected on September 20, 2026
+reported:
+
+```json
+{"name":"COPILOT_GITHUB_TOKEN","updatedAt":"2026-07-25T23:15:22Z"}
+```
+
+That date supports rotating the credential as the fastest discriminating test,
+but it does not prove when the stored PAT was created or whether it expired.
+
+## How do I create a compatible replacement token?
+
+Use the gh-aw [pre-filled fine-grained PAT form](https://github.com/settings/personal-access-tokens/new?name=COPILOT_GITHUB_TOKEN&description=GitHub+Agentic+Workflows+-+Copilot+engine+authentication&user_copilot_requests=read),
+then verify all of these settings before generating the token:
+
+1. **Resource owner** is the user account that has the Copilot license, not the organization.
+2. **Account permissions → Copilot Requests** is set to **Read**.
+3. The token owner has an active Copilot subscription and access to the selected model.
+
+Do not use an OAuth user token such as a `gho_...` token. gh-aw requires a PAT
+for `COPILOT_GITHUB_TOKEN` and rejects OAuth user tokens during activation.
+
+## How do I update the repository secret quickly?
+
+Use GitHub CLI without putting the PAT in the command line. This command prompts
+for the value and updates the repository secret used by the next workflow run:
+
+```bash
+gh secret set COPILOT_GITHUB_TOKEN \
+  --repo ks6088ts-labs/template-github-agentic-workflows
+```
+
+Rotating only the secret does not require `gh aw compile` or a repository
+commit. GitHub Actions resolves the current secret value when the next run
+starts.
+
+GitHub CLI encrypts the value locally before sending it. Avoid a literal
+`--body "github_pat_..."` because command-line arguments and shell history can
+expose credentials. If `COPILOT_GITHUB_TOKEN` is already supplied securely in
+the environment or this repository's gitignored `.env`, the existing shortcut
+updates the same repository secret:
 
 ```bash
 make set-secret-github-copilot-token
 ```
 
-Organizations with centralized Copilot billing can instead use the built-in
+Confirm the secret name and update timestamp without reading its value:
+
+```bash
+gh secret list \
+  --repo ks6088ts-labs/template-github-agentic-workflows \
+  --app actions \
+  --json name,updatedAt \
+  --jq '.[] | select(.name == "COPILOT_GITHUB_TOKEN")'
+```
+
+## How do I verify the replacement?
+
+In a temporary local shell where the new PAT has been exported securely, first
+exercise the same Copilot entitlement outside Actions:
+
+```bash
+copilot -p "Reply only with OK"
+```
+
+If this fails, rotating the Actions secret alone will not help; correct the PAT
+permission, Copilot license, or organization/model policy. If it succeeds,
+dispatch and audit a fresh workflow run:
+
+```bash
+gh aw run daily-repo-status
+gh aw audit <new-run-id> --json
+```
+
+The repair is confirmed when the run starts at least one inference turn and
+reports nonzero token usage. A successful activation secret check or a recent
+`updatedAt` timestamp alone is not sufficient.
+
+## Can I avoid a long-lived PAT?
+
+Yes. Organizations with centralized Copilot billing can use the built-in
 GitHub Actions token by declaring the documented permission and recompiling:
 
 ```yaml
@@ -92,8 +197,9 @@ requests in its Copilot policies.
 
 No. The harness also logged that it could not persist the reflection payload to
 `/home/runner/work/_temp/awf-reflect.json`. That warning affects diagnostic
-artifact persistence, but execution continued into the bounded catalog refresh.
-The explicit exit followed the unresolved-alias message.
+artifact persistence, but execution continued. The original run exited after
+the unresolved-alias message; the follow-up run reached the Copilot CLI and was
+explicitly classified as `authentication_failed`.
 
 Treat the permission warning as a separate runtime issue if reflection artifacts
 are needed, but do not use it to explain this exit unless the model-catalog and
@@ -118,6 +224,7 @@ Check the signals in this order:
 | `refusing to start Copilot with an unresolved alias` | Expected fail-closed behavior; the unresolved alias is not sent to inference. |
 | Zero turns and zero effective tokens | Failure occurred during the harness handoff, before model inference. |
 | A concrete model also returns 401 during inference | Fix the token, entitlement, or organization policy; model pinning is not sufficient. |
+| Activation secret validation succeeds, then inference returns 401 | A secret is present, but provider acceptance has not been proven; rotate or diagnose the PAT. |
 
 The upstream issue originally covered HTTP 429. This incident returned HTTP
 401, but it reached the same generalized fail-closed path introduced by the
@@ -130,7 +237,8 @@ upstream fix.
 3. Recompile and commit both the source workflow and generated `.lock.yml`.
 4. Run repository validation, then dispatch the workflow again.
 5. Audit the rerun and confirm that at least one inference turn starts.
-6. If inference itself returns 401, repair the Copilot credential or organization policy.
+6. If inference itself returns 401, create a compatible PAT, update `COPILOT_GITHUB_TOKEN`, and test the PAT with Copilot CLI.
+7. If a fresh PAT still fails, repair the Copilot license, model entitlement, or organization policy.
 
 For this repository, the local validation sequence is:
 
@@ -145,6 +253,7 @@ gh aw run daily-repo-status
 | Evidence | Primary source |
 | --- | --- |
 | Incident log and exact 401/alias failure | [Workflow run 35470003900](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900/job/105969169242#step:26:210) |
+| Concrete-model provider 401 and `authentication_failed` classification | [Workflow run 35471231052](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052/job/105972518194#step:26:210) |
 | Alias keys require a catalog; concrete IDs bypass alias resolution | [`resolve_model_alias.cjs` at gh-aw v0.88.7](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.cjs) |
 | One bounded refresh followed by fail-closed exit | [`copilot_harness.cjs` at gh-aw v0.88.7](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/copilot_harness.cjs) |
 | Regression coverage for an empty catalog and a concrete model | [`resolve_model_alias.test.cjs` at gh-aw v0.88.7](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.test.cjs) |
@@ -152,4 +261,7 @@ gh aw run daily-repo-status
 | Implementation of bounded retry and unresolved-alias refusal | [github/gh-aw pull request #53456](https://github.com/github/gh-aw/pull/53456) |
 | Compiler/runtime version used in the incident | [gh-aw v0.88.7 release](https://github.com/github/gh-aw/releases/tag/v0.88.7) |
 | Supported engine/model configuration | [AI Engines reference](https://github.github.com/gh-aw/reference/engines/) |
-| PAT versus `copilot-requests: write` authentication paths | [Billing reference](https://github.github.com/gh-aw/reference/billing/) and [Authentication reference](https://github.github.com/gh-aw/reference/auth/) |
+| Fine-grained PAT requirements, secret setup, and `copilot-requests: write` alternative | [Authentication reference](https://github.github.com/gh-aw/reference/auth/) and [Billing reference](https://github.github.com/gh-aw/reference/billing/) |
+| Local Copilot license/inference diagnostic | [gh-aw Common Issues](https://github.github.com/gh-aw/troubleshooting/common-issues/#copilot-license-or-inference-access-issues) |
+| Secure repository secret update and metadata listing | [`gh secret set` manual](https://cli.github.com/manual/gh_secret_set), [`gh secret list` manual](https://cli.github.com/manual/gh_secret_list), and [Using secrets in GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions) |
+| PAT expiration and revocation conditions | [Token expiration and revocation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/token-expiration-and-revocation) and [Managing personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) |
