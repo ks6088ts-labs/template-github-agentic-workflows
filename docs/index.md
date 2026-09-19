@@ -21,6 +21,10 @@ Persona-based scenarios, each linked to a working workflow. Start from the
 - [Workflow format and the compile pipeline](concepts/compilation-and-format.md)
 - [External integrations: Azure and external APIs](concepts/external-integrations.md)
 
+## Troubleshooting
+
+- [FAQ: Copilot model alias resolution fails before startup](troubleshooting/copilot-model-alias-resolution.md)
+
 ## References
 
 - [Your first agentic workflow](https://docs.github.com/en/copilot/how-tos/github-agentic-workflows/quickstart)

@@ -20,6 +20,10 @@ GitHub Agentic Workflows のための厳選されたテンプレート集
 - [ワークフローのフォーマットとコンパイルパイプライン](concepts/compilation-and-format.ja.md)
 - [外部連携: Azure・外部 API](concepts/external-integrations.ja.md)
 
+## トラブルシューティング
+
+- [FAQ: Copilot のモデルエイリアス解決が起動前に失敗する](troubleshooting/copilot-model-alias-resolution.ja.md)
+
 ## 参考リンク
 
 - [はじめてのエージェントワークフロー](https://docs.github.com/en/copilot/how-tos/github-agentic-workflows/quickstart)
