@@ -219,6 +219,64 @@ permissions:
 
 この方法は、organization の Copilot policy で Copilot CLI request が有効な場合に限り使用できます。
 
+## `copilot-requests: write` 使用時の HTTP 403 は何を意味するか
+
+別の `Advanced Guideline Impact Report` の[失敗した実行](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759)と
+その [agent job](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759/job/105976804951)には、
+次のログが含まれています。
+
+```text
+S2STOKENS: true
+[copilot-harness] awf-reflect: models fetch returned 403 for http://api-proxy:10002/models
+[copilot-harness] inference routing: mode=cli configuredModel="claude-sonnet-5" endpoint=managed-by-copilot-cli
+Authentication failed with provider at http://172.30.0.30:10002 (HTTP 403).
+[copilot-harness] attempt 2: Copilot requests authentication failed through the gh-aw API proxy (HTTP 403, model=claude-sonnet-5, stage=starting the Copilot CLI request).
+```
+
+失敗時の commit では、[ソースワークフロー](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.md#L5-L9)が
+`copilot-requests: write` を宣言していました。そのため、[生成された agent job](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.lock.yml#L365)は
+`COPILOT_GITHUB_TOKEN` に `${{ github.token }}` を設定し、
+[`S2STOKENS: true`](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.lock.yml#L888-L911)を有効にしていました。
+gh-aw の認証リファレンスでは、`copilot-requests: write` はこの組み込み token の経路を選択し、
+`COPILOT_GITHUB_TOKEN` という repository secret が存在しても推論には使用しないと規定されています。
+したがって、secret の追加や更新だけでは、この実行の認証経路は変わりません。
+
+内部の Copilot CLI は `COPILOT_PROVIDER_*` の値を確認する一般的な案内も出力しました。
+この S2S 経路では、後から出力される gh-aw の診断の方が具体的です。この一般的なメッセージを理由に
+provider key の repository secret を追加しないでください。
+
+これらの signal から、最初の推論ターンより前に organization 課金の認可で失敗したと判断できます。
+ただし、403 だけでは不足している管理設定を特定できません。organization に有効な Copilot subscription が
+あること、Copilot CLI request の centralized billing が有効であること、生成された job にこの権限が
+あることを確認します。harness は具体的なモデルを選択した後、推論前に `tokenCount=0` を記録しているため、
+これはエイリアス解決や利用できないモデルの response ではありません。
+
+## 利用できない organization 課金から PAT 認証へ切り替えるにはどうするか
+
+organization の centralized billing を利用できず、個人または seat 課金へ切り替える場合は、
+ソースワークフローでその経路を明示的に無効化します。
+
+```yaml
+permissions:
+  contents: read
+  copilot-requests: none
+engine: copilot
+model: claude-sonnet-5
+```
+
+前述の手順に従って、互換性のある fine-grained PAT を repository secret
+`COPILOT_GITHUB_TOKEN` に設定し、lock ファイルを再生成します。
+
+```bash
+gh aw compile guideline-impact-report --strict
+```
+
+生成された lock ファイルで、Copilot 実行が `${{ secrets.COPILOT_GITHUB_TOKEN }}` を使用し、
+`S2STOKENS: true` が設定されていないことを確認します。PAT が優先されることを期待して両方の経路を
+設定しないでください。organization 管理者が centralized billing を有効にする場合は、
+`copilot-requests: write` を維持し、PAT を使わず組み込み token の経路を使用します。どちらの場合も、
+新しい実行で 1 回以上の推論ターンと 0 より大きい token usage が記録されて初めて復旧を確認できます。
+
 ## `awf-reflect.json` の `EACCES` warning が原因か
 
 いいえ。harness は reflection payload を `/home/runner/work/_temp/awf-reflect.json` に保存できないことも
@@ -226,6 +284,9 @@ permissions:
 未解決エイリアスのメッセージ後に終了し、後続の実行は Copilot CLI まで到達して
 `authentication_failed` と明示的に分類されました。直近の実行も Copilot CLI まで到達し、利用できない
 モデルを示す HTTP 400 を明示的に返しました。
+
+別の organization 課金の 403 実行でも同じ EACCES warning が出ましたが、API proxy が 403 を返した後に
+reflection payload を保存する段階の warning です。provider の認可失敗を説明する原因ではありません。
 
 reflection artifact が必要な場合は permission warning を別の runtime issue として扱います。ただし、
 モデルカタログとエイリアス解決のメッセージが存在する場合、この終了の説明として permission warning を
@@ -248,12 +309,14 @@ gh aw logs <workflow-name> --json
 | 指定したモデルが `Available models` にない | 以前の実行や compiler catalog で受理されていても、設定した ID は古いものとして扱います。 |
 | モデル関連の同じ HTTP 400 が harness の retry ごとに繰り返される | 決定的な設定エラーです。retry しても利用できないモデルは有効になりません。 |
 | `COPILOT_MODEL: auto` または別のエイリアス | Copilot を起動する前に runtime catalog data が必要です。 |
-| `models fetch returned 401` または `403` | catalog endpoint が認証または認可を拒否しています。この永続的な 4xx response は fail-fast になります。 |
+| `models fetch returned 401` | 設定した credential または endpoint の認証が拒否されています。PAT 経路では `COPILOT_GITHUB_TOKEN`、permission、token owner の entitlement を確認します。 |
+| `models fetch returned 403` と `S2STOKENS: true` または organization 課金の診断メッセージ | Actions token に centralized organization billing 経由の Copilot 推論権限がありません。この課金経路を有効にするか、PAT 認証へ明示的に切り替えます。 |
 | `models fetch returned 429` または `503` | catalog endpoint が一時的に利用できません。現在の gh-aw は bounded retry を行います。 |
 | `refusing to start Copilot with an unresolved alias` | 想定された fail-closed 動作です。未解決のエイリアスは推論に送信されません。 |
 | turn と effective token がともに 0 | モデル推論より前の harness handoff で失敗しています。 |
 | 具体的なモデルでも推論時に 401 | token、entitlement、または organization policy を修正する必要があり、モデルの固定だけでは解決しません。 |
 | activation の secret validation が成功した後、推論が 401 | secret は存在しますが、provider が受け付けることは確認できていません。PAT の更新または診断が必要です。 |
+| `COPILOT_GITHUB_TOKEN` が存在するが、workflow が `copilot-requests: write` を宣言している | repository secret は推論で無視されます。centralized billing を診断するか、workflow を `copilot-requests: none` に変更して再コンパイルします。 |
 
 上流 Issue の当初の対象は HTTP 429 でした。今回の事例では HTTP 401 が返りましたが、上流の修正で
 導入された同じ汎用的な fail-closed 経路に到達しています。
@@ -261,13 +324,15 @@ gh aw logs <workflow-name> --json
 ## 復旧手順は何か
 
 1. 最終的な retry error ではなく、provider の正確なメッセージから失敗を分類します。
-2. `requested model is not available` の場合は、その response の `Available models` 一覧から具体的な ID を選択します。
-3. 未解決エイリアスの場合は、リポジトリの subscription で使用できる具体的な Copilot model を選択します。
-4. ソースの `*.md` ワークフローに `engine: copilot` とトップレベルの `model:` を設定します。
-5. 再コンパイルし、ソースワークフローと生成された `.lock.yml` の両方をコミットします。
-6. リポジトリの検証後に workflow を再実行し、1 回以上の推論ターンが開始されたことを確認します。
-7. 推論が 401 を返す場合は、互換性のある PAT を作成し、`COPILOT_GITHUB_TOKEN` を更新して Copilot CLI で PAT を検証します。
-8. 新しい PAT でも失敗する場合は、Copilot license、model entitlement、または organization policy を修正します。
+2. ソース、生成された lock、ログから認証経路を判定します。`copilot-requests: write` と `S2STOKENS: true` の組み合わせは organization 課金、`COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}` は PAT 経路です。
+3. `requested model is not available` の場合は、その response の `Available models` 一覧から具体的な ID を選択します。
+4. 未解決エイリアスの場合は、リポジトリの subscription で使用できる具体的な Copilot model を選択します。
+5. ソースの `*.md` ワークフローに `engine: copilot` とトップレベルの `model:` を設定します。
+6. 再コンパイルし、ソースワークフローと生成された `.lock.yml` の両方をコミットします。
+7. リポジトリの検証後に workflow を再実行し、1 回以上の推論ターンが開始されたことを確認します。
+8. PAT 経路が 401 を返す場合は、互換性のある PAT を作成し、`COPILOT_GITHUB_TOKEN` を更新して Copilot CLI で PAT を検証します。
+9. organization 課金の経路が 403 を返す場合は、Copilot subscription、centralized billing、policy の前提を有効にするか、`copilot-requests: none` と PAT 経路へ明示的に切り替えます。
+10. 新しい PAT でも失敗する場合は、Copilot license、model entitlement、または organization policy を修正します。
 
 このリポジトリでは、次の順序でローカル検証します。
 
@@ -284,6 +349,9 @@ gh aw run daily-repo-status
 | 具体的なモデルの利用不可エラーと現在のモデル一覧 | [Workflow run 35471741529](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529)と、その [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529/job/105973861793#step:26:211) |
 | 今回のログと 401／エイリアス解決失敗 | [Workflow run 35470003900](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900)と、その [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900/job/105969169242#step:26:210) |
 | 具体的なモデルに対する provider の 401 と `authentication_failed` の分類 | [Workflow run 35471231052](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052)と、その [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052/job/105972518194#step:26:210) |
+| organization 課金の HTTP 403、`S2STOKENS: true`、token 0 | [Workflow run 35472789759](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759)と、その [agent job](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759/job/105976804951) |
+| 失敗時の commit で選択された認証経路 | [ソースワークフロー](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.md#L5-L9)と[生成された lock ファイル](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.lock.yml#L888-L911) |
+| organization 課金経路の HTTP 403 分類 | [gh-aw v0.88.7 の harness 回帰テスト](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/copilot_harness.test.cjs)と[診断テンプレート](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/md/copilot_requests_proxy_auth_403.md) |
 | エイリアスキーは catalog が必要で、具体的な ID はエイリアス解決を迂回する | [gh-aw v0.88.7 の `resolve_model_alias.cjs`](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.cjs) |
 | 1 回の bounded refresh 後に fail-closed で終了する | [gh-aw v0.88.7 の `copilot_harness.cjs`](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/copilot_harness.cjs) |
 | 空の catalog と具体的なモデルに対する回帰テスト | [gh-aw v0.88.7 の `resolve_model_alias.test.cjs`](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.test.cjs) |

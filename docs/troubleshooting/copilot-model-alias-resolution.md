@@ -236,6 +236,69 @@ permissions:
 This alternative only works when the organization has enabled Copilot CLI
 requests in its Copilot policies.
 
+## What does a 403 with `copilot-requests: write` mean?
+
+A separate [failed run](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759)
+of `Advanced Guideline Impact Report` and its [agent job](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759/job/105976804951)
+contained this sequence:
+
+```text
+S2STOKENS: true
+[copilot-harness] awf-reflect: models fetch returned 403 for http://api-proxy:10002/models
+[copilot-harness] inference routing: mode=cli configuredModel="claude-sonnet-5" endpoint=managed-by-copilot-cli
+Authentication failed with provider at http://172.30.0.30:10002 (HTTP 403).
+[copilot-harness] attempt 2: Copilot requests authentication failed through the gh-aw API proxy (HTTP 403, model=claude-sonnet-5, stage=starting the Copilot CLI request).
+```
+
+At the failed commit, the [source workflow](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.md#L5-L9)
+declared `copilot-requests: write`. The [compiled agent job](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.lock.yml#L365)
+therefore assigned `${{ github.token }}` to `COPILOT_GITHUB_TOKEN` and enabled
+[`S2STOKENS: true`](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.lock.yml#L888-L911).
+The gh-aw authentication reference specifies that `copilot-requests: write`
+selects this built-in token path and ignores any repository secret named
+`COPILOT_GITHUB_TOKEN` for inference. Adding or rotating that secret alone
+therefore cannot change this run's authentication path.
+
+The inner Copilot CLI also printed a generic suggestion to check
+`COPILOT_PROVIDER_*` values. In this S2S path, the later gh-aw diagnostic is
+more specific; do not add provider-key repository secrets in response to that
+generic message.
+
+These signals localize the failure to organization-billing authorization before
+the first inference turn. The 403 alone does not identify which administrative
+prerequisite is missing. Verify that the organization has an active Copilot
+subscription, centralized billing is enabled for Copilot CLI requests, and the
+permission is present in the compiled job. This is not an alias-resolution or
+unavailable-model response: the harness selected the concrete model and reported
+`tokenCount=0` before inference.
+
+## How do I switch from unavailable organization billing to PAT authentication?
+
+If centralized organization billing is unavailable and the intended fallback is
+individual/seat billing, explicitly disable that path in the source workflow:
+
+```yaml
+permissions:
+  contents: read
+  copilot-requests: none
+engine: copilot
+model: claude-sonnet-5
+```
+
+Configure a compatible fine-grained PAT in the `COPILOT_GITHUB_TOKEN` repository
+secret as described above, then regenerate the lock file:
+
+```bash
+gh aw compile guideline-impact-report --strict
+```
+
+Confirm that the generated lock file uses `${{ secrets.COPILOT_GITHUB_TOKEN }}`
+for Copilot execution and does not set `S2STOKENS: true`. Do not configure both
+paths expecting the PAT to take precedence. If organization administrators enable
+centralized billing instead, keep `copilot-requests: write` and use the built-in
+token path without a PAT. In either case, only a fresh run with at least one
+inference turn and nonzero token usage confirms recovery.
+
 ## Was the `awf-reflect.json` `EACCES` warning the root cause?
 
 No. The harness also logged that it could not persist the reflection payload to
@@ -244,6 +307,10 @@ artifact persistence, but execution continued. The original run exited after
 the unresolved-alias message; the follow-up run reached the Copilot CLI and was
 explicitly classified as `authentication_failed`; the latest run reached the
 Copilot CLI and returned the explicit unavailable-model HTTP 400.
+
+The separate organization-billing 403 run emitted the same EACCES warning only
+while persisting the reflection payload after the proxy had already returned
+403. It does not explain the provider authorization failure.
 
 Treat the permission warning as a separate runtime issue if reflection artifacts
 are needed, but do not use it to explain this exit unless the model-catalog and
@@ -266,12 +333,14 @@ Check the signals in this order:
 | The requested model is absent from `Available models` | Treat the configured ID as stale even if an earlier run or compiler catalog accepted it. |
 | The same model-related HTTP 400 repeats across harness retries | This is a deterministic configuration failure; retries do not make an unavailable model valid. |
 | `COPILOT_MODEL: auto` or another alias | Runtime catalog data is required before Copilot can start. |
-| `models fetch returned 401` or `403` | The catalog endpoint rejected authentication or authorization; these permanent 4xx responses are fail-fast. |
+| `models fetch returned 401` | The configured credential or endpoint authentication was rejected. On the PAT path, inspect `COPILOT_GITHUB_TOKEN`, its permission, and the token owner's entitlement. |
+| `models fetch returned 403` together with `S2STOKENS: true` or the organization-billing diagnostic | The Actions token lacks Copilot inference authorization through centralized organization billing. Enable that billing path or switch explicitly to PAT authentication. |
 | `models fetch returned 429` or `503` | The catalog endpoint is temporarily unavailable; current gh-aw versions use bounded retries. |
 | `refusing to start Copilot with an unresolved alias` | Expected fail-closed behavior; the unresolved alias is not sent to inference. |
 | Zero turns and zero effective tokens | Failure occurred during the harness handoff, before model inference. |
 | A concrete model also returns 401 during inference | Fix the token, entitlement, or organization policy; model pinning is not sufficient. |
 | Activation secret validation succeeds, then inference returns 401 | A secret is present, but provider acceptance has not been proven; rotate or diagnose the PAT. |
+| `COPILOT_GITHUB_TOKEN` exists, but the workflow declares `copilot-requests: write` | The repository secret is ignored for inference; diagnose centralized billing or change the workflow to `copilot-requests: none` and recompile. |
 
 The upstream issue originally covered HTTP 429. This incident returned HTTP
 401, but it reached the same generalized fail-closed path introduced by the
@@ -280,13 +349,15 @@ upstream fix.
 ## What is the recovery checklist?
 
 1. Classify the failure from the exact provider message rather than the final retry error.
-2. For `requested model is not available`, select a concrete ID from that response's `Available models` list.
-3. For an unresolved alias, select a concrete Copilot model supported by the repository's subscription.
-4. Set `engine: copilot` and top-level `model:` in the source `*.md` workflow.
-5. Recompile and commit both the source workflow and generated `.lock.yml`.
-6. Run repository validation, dispatch the workflow again, and confirm that at least one inference turn starts.
-7. If inference returns 401, create a compatible PAT, update `COPILOT_GITHUB_TOKEN`, and test the PAT with Copilot CLI.
-8. If a fresh PAT still fails, repair the Copilot license, model entitlement, or organization policy.
+2. Identify the authentication path from the source, compiled lock, and logs: `copilot-requests: write` with `S2STOKENS: true` is organization billing; `COPILOT_GITHUB_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}` is the PAT path.
+3. For `requested model is not available`, select a concrete ID from that response's `Available models` list.
+4. For an unresolved alias, select a concrete Copilot model supported by the repository's subscription.
+5. Set `engine: copilot` and top-level `model:` in the source `*.md` workflow.
+6. Recompile and commit both the source workflow and generated `.lock.yml`.
+7. Run repository validation, dispatch the workflow again, and confirm that at least one inference turn starts.
+8. If the PAT path returns 401, create a compatible PAT, update `COPILOT_GITHUB_TOKEN`, and test the PAT with Copilot CLI.
+9. If the organization-billing path returns 403, enable its Copilot subscription, centralized billing, and policy prerequisites, or switch explicitly to `copilot-requests: none` and the PAT path.
+10. If a fresh PAT still fails, repair the Copilot license, model entitlement, or organization policy.
 
 For this repository, the local validation sequence is:
 
@@ -303,6 +374,9 @@ gh aw run daily-repo-status
 | Concrete model rejected as unavailable and current model list | [Workflow run 35471741529](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471741529/job/105973861793#step:26:211) |
 | Incident log and exact 401/alias failure | [Workflow run 35470003900](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35470003900/job/105969169242#step:26:210) |
 | Concrete-model provider 401 and `authentication_failed` classification | [Workflow run 35471231052](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052) and its [agent execution step](https://github.com/ks6088ts-labs/template-github-agentic-workflows/actions/runs/35471231052/job/105972518194#step:26:210) |
+| Organization-billing HTTP 403, `S2STOKENS: true`, and zero tokens | [Workflow run 35472789759](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759) and its [agent job](https://github.com/ks6088ts-labs/handson-github-actions/actions/runs/35472789759/job/105976804951) |
+| Authentication path selected at the failed commit | [Source workflow](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.md#L5-L9) and [compiled lock file](https://github.com/ks6088ts-labs/handson-github-actions/blob/4b6ecd279f64de7d7f038ba17e813c319ec79766/.github/workflows/guideline-impact-report.lock.yml#L888-L911) |
+| HTTP 403 classification for the organization-billing path | [gh-aw v0.88.7 harness regression test](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/copilot_harness.test.cjs) and [diagnostic template](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/md/copilot_requests_proxy_auth_403.md) |
 | Alias keys require a catalog; concrete IDs bypass alias resolution | [`resolve_model_alias.cjs` at gh-aw v0.88.7](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.cjs) |
 | One bounded refresh followed by fail-closed exit | [`copilot_harness.cjs` at gh-aw v0.88.7](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/copilot_harness.cjs) |
 | Regression coverage for an empty catalog and a concrete model | [`resolve_model_alias.test.cjs` at gh-aw v0.88.7](https://github.com/github/gh-aw/blob/v0.88.7/actions/setup/js/resolve_model_alias.test.cjs) |
