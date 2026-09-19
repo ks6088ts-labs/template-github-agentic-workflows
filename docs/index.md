@@ -23,7 +23,7 @@ Persona-based scenarios, each linked to a working workflow. Start from the
 
 ## Troubleshooting
 
-- [FAQ: Copilot model selection fails before startup](troubleshooting/copilot-model-alias-resolution.md)
+- [Troubleshooting Copilot engine startup failures](troubleshooting/copilot-engine-startup-failures.md)
 
 ## References
 
